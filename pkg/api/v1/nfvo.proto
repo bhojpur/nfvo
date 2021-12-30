@@ -1,0 +1,239 @@
+syntax = "proto3";
+
+package v1;
+option go_package = "github.com/bhojpur/nfvo/pkg/api/v1";
+import "google/protobuf/timestamp.proto";
+
+service NfvoService {
+    // StartLocalVnfm starts a VNF Manager on the Bhojpur.NET Platform directly.
+    // The incoming requests are expected in the following order:
+    //   1. metadata
+    //   2. all bytes constituting the nfvo/config.yaml
+    //   3. all bytes constituting the NFV Manager YAML that will be executed (that the config.yaml points to)
+    //   4. all bytes constituting the gzipped Bhojpur.NET Platform application tar stream
+    //   5. the Bhojpur.NET Platform application tar stream done marker
+    rpc StartLocalVnfm(stream StartLocalVnfmRequest) returns (StartVnfmResponse) {};
+
+    // StartFromPreviousVnfm starts a new VNF Manager based on a previous one.
+    // If the previous VNF Manager does not have the can-replay condition set this call will result in an error.
+    rpc StartFromPreviousVnfm(StartFromPreviousVnfmRequest) returns (StartVnfmResponse) {};
+
+    // StartVnfmRequest starts a new VNF Manager based on its specification.
+    rpc StartVnfm(StartVnfmRequest) returns (StartVnfmResponse) {};
+
+    // Searches for VNF Manager(s) known to this instance
+    rpc ListVnfms(ListVnfmsRequest) returns (ListVnfmsResponse) {};
+
+    // Subscribe listens to new VNF Manager(s) updates
+    rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse) {};
+
+    // GetVnfm retrieves details of a single VNF Manager
+    rpc GetVnfm(GetVnfmRequest) returns (GetVnfmResponse) {};
+
+    // Listen listens to VNF Manager updates and log output of a running VNF Manager
+    rpc Listen(ListenRequest) returns (stream ListenResponse) {};
+
+    // StopVnfm stops a currently running VNF Manager
+    rpc StopVnfm(StopVnfmRequest) returns (StopVnfmResponse) {};
+}
+
+message StartLocalVnfmRequest {
+    oneof content {
+        VnfmMetadata metadata = 1;
+        bytes config_yaml = 2;
+        bytes vnfm_yaml = 3;
+        bytes application_tar = 4;
+        bool application_tar_done = 5;
+    };
+}
+
+message StartVnfmResponse {
+    VnfmStatus status = 1;
+}
+
+message StartVnfmRequest {
+    VnfmMetadata metadata = 1;
+    string vnfm_path = 2;
+    bytes vnfm_yaml = 3;
+    bytes sideload = 4; 
+    google.protobuf.Timestamp wait_until = 5;
+    string name_suffix = 6;
+}
+
+message StartFromPreviousVnfmRequest {
+    string previous_vnfm = 1;
+    string gitops_token = 2;
+    google.protobuf.Timestamp wait_until = 3;
+}
+
+message ListVnfmsRequest {
+    repeated FilterExpression filter = 1;
+    repeated OrderExpression order = 2;
+    int32 start = 3;
+    int32 limit = 4;
+}
+
+message FilterExpression {
+    repeated FilterTerm terms = 1;
+}
+
+message FilterTerm {
+    string field = 1;
+    string value = 2;
+    FilterOp operation = 3;
+    bool negate = 4;
+}
+
+enum FilterOp {
+    OP_EQUALS = 0;
+    OP_STARTS_WITH = 1;
+    OP_ENDS_WITH = 2;
+    OP_CONTAINS = 3;
+    OP_EXISTS = 4;
+}
+
+message OrderExpression {
+    string field = 1;
+    bool ascending = 2;
+}
+
+message ListVnfmsResponse {
+    int32 total = 1;
+    repeated VnfmStatus result = 2;
+}
+
+message SubscribeRequest {
+    repeated FilterExpression filter = 1;
+}
+
+message SubscribeResponse {
+    VnfmStatus result = 1;
+}
+
+message GetVnfmRequest {
+    string name = 1;
+}
+
+message GetVnfmResponse {
+    VnfmStatus result = 1;
+}
+
+message ListenRequest {
+    string name = 1;
+    bool updates = 2;
+    ListenRequestLogs logs = 3;
+}
+
+enum ListenRequestLogs {
+    LOGS_DISABLED = 0;
+    LOGS_UNSLICED = 1;
+    LOGS_RAW = 2;
+    LOGS_HTML = 3;
+}
+
+message ListenResponse {
+    oneof content {
+        VnfmStatus update = 1;
+        LogSliceEvent slice = 2;
+    };
+}
+
+message VnfmStatus {
+    string name = 1;
+    VnfmMetadata metadata = 2;
+    VnfmPhase phase = 3;
+    VnfmConditions conditions = 4;
+    string details = 5;
+    repeated VnfmResult results = 6;
+}
+
+message VnfmMetadata {
+    string owner = 1;
+    Repository repository = 2;
+    VnfmTrigger trigger = 3;
+    google.protobuf.Timestamp created = 4;
+    google.protobuf.Timestamp finished = 5;
+    repeated Annotation annotations = 6;
+    string vnfm_spec_name = 7;
+}
+
+message Repository {
+    string host = 1;
+    string owner = 2;
+    string repo = 3;
+    string ref = 4;
+    string revision = 5;
+}
+
+message Annotation {
+    string key = 1;
+    string value = 2;
+}
+
+enum VnfmTrigger {
+    TRIGGER_UNKNOWN = 0;
+    TRIGGER_MANUAL = 1;
+    TRIGGER_PUSH = 2;
+    TRIGGER_DELETED = 3;
+}
+
+enum VnfmPhase {
+    // Unknown means we don't know what state the VNF Manager is in
+    PHASE_UNKNOWN = 0;
+
+    // Preparing means the VNF Manager hasn't started yet and isn't consuming resources in the system
+    PHASE_PREPARING = 1;
+
+    // Starting means the VNF Manager has been scheduled and is waiting to run. Things that might prevent it
+	// from running already are pod scheduling, image pull or container startup.
+    PHASE_STARTING = 2;
+
+    // Running means the VNF Manager is actually running and doing work.
+    PHASE_RUNNING = 3;
+
+    // Done means the VNF Manager has run and is finished
+    PHASE_DONE = 4;
+
+    // Cleaning means the VNF Manager is in post-run cleanup
+    PHASE_CLEANUP = 5;
+
+    // Waiting means the VNF Manager is waiting for its start time or some other condition to be met
+    PHASE_WAITING = 6;
+}
+
+message VnfmConditions {
+    bool success = 1;
+    int32 failure_count = 2;
+    bool can_replay = 3;
+    google.protobuf.Timestamp wait_until = 4;
+    bool did_execute = 5;
+}
+
+message VnfmResult {
+    string type = 1;
+    string payload = 2;
+    string description = 3;
+    repeated string channels = 4;
+}
+
+message LogSliceEvent {
+    string name = 1;
+    LogSliceType type = 2;
+    string payload = 3;
+}
+
+enum LogSliceType {
+    SLICE_ABANDONED = 0;
+    SLICE_PHASE = 1;
+    SLICE_START = 2;
+    SLICE_CONTENT = 3;
+    SLICE_DONE = 4;
+    SLICE_FAIL = 5;
+    SLICE_RESULT = 6;
+}
+
+message StopVnfmRequest {
+    string name = 1;
+}
+
+message StopVnfmResponse { }
